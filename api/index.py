@@ -1,28 +1,42 @@
 from flask import Flask, request, jsonify
-import os, requests, hmac, hashlib, logging
+import os
+import requests
+import hmac
+import hashlib
+import logging
 
 app = Flask(__name__)
+logging.basicConfig(level=logging.INFO)
 
 # ---------- Meta credentials ----------
 ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN")
 APP_SECRET   = os.getenv("META_APP_SECRET")
 PHONE_ID     = os.getenv("META_PHONE_NUMBER_ID")
 HF_SPACE     = os.getenv("RAG_ENDPOINT", "https://nimroddev-rag-space.hf.space/ask")
+VERIFY_TOKEN = os.getenv("META_VERIFY_TOKEN", "ldlamaki2025")
 
 # ---------- verify incoming signature ----------
 def verify_signature(payload, sig):
     mac = hmac.new(APP_SECRET.encode(), payload, hashlib.sha256).hexdigest()
     return hmac.compare_digest(f"sha256={mac}", sig)
 
-# ---------- webhook entry ----------
+# ---------- Meta verification (GET) ----------
+@app.get("/")
+def verify_webhook():
+    mode = request.args.get("hub.mode")
+    token = request.args.get("hub.verify_token")
+    challenge = request.args.get("hub.challenge")
+    if mode == "subscribe" and token == VERIFY_TOKEN:
+        return challenge, 200
+    return "Forbidden", 403
+
+# ---------- webhook entry (POST) ----------
 @app.post("/")
 def webhook():
-    # 1. verify request came from Meta
     signature = request.headers.get("X-Hub-Signature-256", "")
     if not verify_signature(request.get_data(), signature):
         return "Bad signature", 403
 
-    # 2. parse Meta payload
     data = request.get_json()
     entry = data.get("entry", [{}])[0]
     changes = entry.get("changes", [{}])[0]
@@ -34,19 +48,17 @@ def webhook():
 
     msg = messages[0]
     if msg.get("type") != "text":
-        return "OK", 200  # ignore media for now
+        return "OK", 200
 
     from_number = msg["from"]
-    text        = msg["text"]["body"].strip()
+    text = msg["text"]["body"].strip()
 
-    # 3. hit your HF-Space RAG
     try:
         reply = requests.post(HF_SPACE, json={"question": text}, timeout=18).json()["answer"]
     except Exception as e:
         logging.exception("RAG error")
         reply = "I'm not sure, a human will follow up."
 
-    # 4. send answer back via Meta Cloud API
     url = f"https://graph.facebook.com/v20.0/{PHONE_ID}/messages"
     payload = {
         "messaging_product": "whatsapp",
