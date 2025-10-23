@@ -33,8 +33,9 @@ def verify_signature(payload: bytes, sig: str) -> bool:
         logging.exception("Error verifying signature")
         return False
 
+
 # ----------------- VERIFY WEBHOOK (GET) -----------------
-@app.get("/")
+@app.get("/webhook")
 def verify_webhook():
     """Meta webhook verification handshake"""
     mode = request.args.get("hub.mode")
@@ -50,8 +51,9 @@ def verify_webhook():
     logging.warning("❌ Webhook verification failed (token mismatch)")
     return "Forbidden", 403
 
+
 # ----------------- HANDLE MESSAGES (POST) -----------------
-@app.post("/")
+@app.post("/webhook")
 def webhook():
     """Handle incoming WhatsApp messages"""
     signature = request.headers.get("X-Hub-Signature-256", "")
@@ -125,3 +127,4 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     logging.info(f"🚀 Flask app running on port {port}")
     app.run(host="0.0.0.0", port=port)
+
