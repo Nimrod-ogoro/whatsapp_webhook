@@ -99,5 +99,4 @@ def webhook():
 
 # Vercel serverless handler
 handler = app
-handler = app
-handler = app
+
