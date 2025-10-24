@@ -9,7 +9,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(
 ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN")
 APP_SECRET   = os.getenv("META_APP_SECRET", "")
 PHONE_ID     = os.getenv("META_PHONE_NUMBER_ID")
-HF_SPACE     = os.getenv("RAG_ENDPOINT", "https://nimroddev-rag-space.hf.space/ask").rstrip("/")  # ← kill trailing space
+HF_SPACE     = os.getenv("RAG_ENDPOINT", "https://nimroddev-rag-space.hf.space/ask").rstrip("/")
 VERIFY_TOKEN = os.getenv("META_VERIFY_TOKEN", "ldlamaki2025")
 
 # ----------------- SIGNATURE -----------------
@@ -83,7 +83,7 @@ def webhook():
             f"https://graph.facebook.com/v20.0/{PHONE_ID}/messages",
             json=payload, headers=headers, timeout=10
         )
-        logging.info(f"📤 WhatsApp reply status: {resp.status_code}")
+        logging.info(f"📤 WhatsApp reply status: {resp.status_code}  {resp.text[:100]}")
     except Exception:
         logging.exception("❌ WhatsApp send failed")
 
