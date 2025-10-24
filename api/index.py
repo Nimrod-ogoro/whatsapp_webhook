@@ -9,12 +9,12 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(
 ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN")
 APP_SECRET   = os.getenv("META_APP_SECRET", "")
 PHONE_ID     = os.getenv("META_PHONE_NUMBER_ID")
-HF_SPACE     = os.getenv("RAG_ENDPOINT", "https://nimroddev-rag-space.hf.space/ask").strip().rstrip("/")  # ← clean URL
+HF_SPACE     = os.getenv("RAG_ENDPOINT", "https://nimroddev-rag-space.hf.space/ask").strip().rstrip("/")
 VERIFY_TOKEN = os.getenv("META_VERIFY_TOKEN", "ldlamaki2025")
 
 # ----------------- SIGNATURE -----------------
 def verify_signature(payload: bytes, sig: str) -> bool:
-    if not APP_SECRET: 
+    if not APP_SECRET:
         return True
     try:
         mac = hmac.new(APP_SECRET.encode(), payload, hashlib.sha256).hexdigest()
@@ -31,7 +31,9 @@ def index():
 # ----------------- VERIFY WEBHOOK -----------------
 @app.route("/webhook", methods=["GET"])
 def verify_webhook():
-    mode, token, challenge = request.args.get("hub.mode"), request.args.get("hub.verify_token"), request.args.get("hub.challenge")
+    mode  = request.args.get("hub.mode")
+    token = request.args.get("hub.verify_token")
+    challenge = request.args.get("hub.challenge")
     logging.info(f"🔍 Verification: mode={mode}, token={token}, challenge={challenge}")
     if mode == "subscribe" and token == VERIFY_TOKEN:
         logging.info("✅ Webhook verified")
@@ -86,7 +88,7 @@ def webhook():
 
     try:
         resp = requests.post(
-            f"https://graph.facebook.com/v20.0/{PHONE_ID}/messages",  # ← removed stray space
+            f"https://graph.facebook.com/v20.0/{PHONE_ID}/messages",  # ← NO space
             json=payload, headers=headers, timeout=10
         )
         logging.info(f"📤 WhatsApp reply status: {resp.status_code}  {resp.text[:100]}")
@@ -95,5 +97,5 @@ def webhook():
 
     return "OK", 200
 
-# Vercel serverless entry point
+# Vercel serverless handler
 handler = app
