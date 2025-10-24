@@ -1,4 +1,4 @@
-# index.py – WhatsApp ↔️ FastAPI RAG Bridge (Flask)
+# api/index.py – WhatsApp ↔️ FastAPI RAG Bridge (Flask)
 from flask import Flask, request, jsonify
 import os, requests, hmac, hashlib, logging, time
 
@@ -9,12 +9,13 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(
 ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN")
 APP_SECRET   = os.getenv("META_APP_SECRET", "")
 PHONE_ID     = os.getenv("META_PHONE_NUMBER_ID")
-HF_SPACE     = os.getenv("RAG_ENDPOINT", "https://nimroddev-rag-space.hf.space/ask").rstrip("/")
+HF_SPACE     = os.getenv("RAG_ENDPOINT", "https://nimroddev-rag-space.hf.space/ask").strip().rstrip("/")  # ← clean URL
 VERIFY_TOKEN = os.getenv("META_VERIFY_TOKEN", "ldlamaki2025")
 
 # ----------------- SIGNATURE -----------------
 def verify_signature(payload: bytes, sig: str) -> bool:
-    if not APP_SECRET: return True
+    if not APP_SECRET: 
+        return True
     try:
         mac = hmac.new(APP_SECRET.encode(), payload, hashlib.sha256).hexdigest()
         return hmac.compare_digest(f"sha256={mac}", sig)
@@ -22,8 +23,13 @@ def verify_signature(payload: bytes, sig: str) -> bool:
         logging.exception("Signature check failed")
         return False
 
+# ----------------- ROOT (health) -----------------
+@app.route("/", methods=["GET"])
+def index():
+    return jsonify({"status": "ok", "service": "whatsapp-rag-bridge"}), 200
+
 # ----------------- VERIFY WEBHOOK -----------------
-@app.get("/webhook")
+@app.route("/webhook", methods=["GET"])
 def verify_webhook():
     mode, token, challenge = request.args.get("hub.mode"), request.args.get("hub.verify_token"), request.args.get("hub.challenge")
     logging.info(f"🔍 Verification: mode={mode}, token={token}, challenge={challenge}")
@@ -33,7 +39,7 @@ def verify_webhook():
     return "Forbidden", 403
 
 # ----------------- HANDLE MESSAGE -----------------
-@app.post("/webhook")
+@app.route("/webhook", methods=["POST"])
 def webhook():
     signature = request.headers.get("X-Hub-Signature-256", "")
     if APP_SECRET and not verify_signature(request.get_data(), signature):
@@ -80,7 +86,7 @@ def webhook():
 
     try:
         resp = requests.post(
-            f"https://graph.facebook.com/v20.0/{PHONE_ID}/messages",
+            f"https://graph.facebook.com/v20.0/{PHONE_ID}/messages",  # ← removed stray space
             json=payload, headers=headers, timeout=10
         )
         logging.info(f"📤 WhatsApp reply status: {resp.status_code}  {resp.text[:100]}")
@@ -89,8 +95,5 @@ def webhook():
 
     return "OK", 200
 
-# ----------------- RUN -----------------
-if __name__ == "__main__":
-    port = int(os.getenv("PORT", 5000))
-    logging.info(f"🚀 Flask on port {port}")
-    app.run(host="0.0.0.0", port=port)
+# Vercel serverless entry point
+handler = app
