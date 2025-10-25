@@ -1,8 +1,7 @@
 {
-  "buildCommand": ".vercel/build.sh",
   "functions": {
     "api/index.py": {
-      "runtime": "python@0.0.0"
+      "runtime": "@vercel/python3@1.0.0"
     }
   }
 }
