@@ -43,6 +43,8 @@ def verify_webhook():
 # ----------------- HANDLE MESSAGE -----------------
 @app.route("/webhook", methods=["POST"])
 def webhook():
+    logging.info("📦 FULL HEADERS: %s", dict(request.headers))
+    logging.info("📦 RAW BODY: %s", request.get_data(as_text=True))
     signature = request.headers.get("X-Hub-Signature-256", "")
     if APP_SECRET and not verify_signature(request.get_data(), signature):
         return "Bad signature", 403
@@ -88,7 +90,7 @@ def webhook():
 
     try:
         resp = requests.post(
-            f"https://graph.facebook.com/v20.0/{PHONE_ID}/messages",  # ← NO space
+            f"https://graph.facebook.com/v20.0/{PHONE_ID}/messages",
             json=payload, headers=headers, timeout=10
         )
         logging.info(f"📤 WhatsApp reply status: {resp.status_code}  {resp.text[:100]}")
@@ -96,7 +98,4 @@ def webhook():
         logging.exception("❌ WhatsApp send failed")
 
     return "OK", 200
-
-# Vercel serverless handler
-handler = app
 
