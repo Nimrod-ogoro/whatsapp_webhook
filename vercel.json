@@ -1,5 +1,7 @@
 {
   "functions": {
-    "api/index.py": {}
+    "api/index.py": {
+      "runtime": "python3.11"
+    }
   }
 }
