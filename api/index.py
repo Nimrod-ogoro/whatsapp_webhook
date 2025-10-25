@@ -90,7 +90,7 @@ def webhook():
 
     try:
         resp = requests.post(
-            f"https://graph.facebook.com/v20.0/{PHONE_ID}/messages",
+            f"https://graph.facebook.com/v22.0/852540791274504/messages",
             json=payload, headers=headers, timeout=10
         )
         logging.info(f"📤 WhatsApp reply status: {resp.status_code}  {resp.text[:100]}")
