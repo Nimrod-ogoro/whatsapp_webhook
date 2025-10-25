@@ -1,7 +1,10 @@
 {
   "functions": {
     "api/index.py": {
-      "runtime": "python@0.0.0"
+      "runtime": "python@0.0.0",
+      "environment": {
+        "PYTHON_CMD": "python3"
+      }
     }
   }
 }
