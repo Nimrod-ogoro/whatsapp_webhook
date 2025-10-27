@@ -17,7 +17,7 @@ JOB_DB = "/tmp/job_queue.db"
 q = SQLiteQueue(JOB_DB, auto_commit=True, multithreading=True)
 
 HF_SPACE_ASK = "https://nimroddev-rag-space-v2.hf.space/ask"
-WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
+WHATSAPP_TOKEN = os.getenv("META_ACCESS_TOKEN",)
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID", "852540791274504")
 
 # ------------------------------------------------------------------
