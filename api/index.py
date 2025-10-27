@@ -10,7 +10,7 @@ ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN")
 APP_SECRET   = os.getenv("META_APP_SECRET", "")
 PHONE_ID     = os.getenv("META_PHONE_NUMBER_ID")
 # FINAL ➜ correct HF-Space endpoint
-HF_SPACE     = os.getenv("RAG_ENDPOINT", "https://nimroddev-rag-space.hf.space/ask").strip().rstrip("/")
+HF_SPACE     = os.getenv("RAG_ENDPOINT", "https://nimroddev-rag-space-v2.hf.space/ask").strip().rstrip("/")
 VERIFY_TOKEN = os.getenv("META_VERIFY_TOKEN", "ldlamaki2025")
 
 # ----------------- SIGNATURE -----------------
