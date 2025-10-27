@@ -117,7 +117,7 @@ def webhook():
     try:
         resp = requests.post(
             f"https://graph.facebook.com/v22.0/852540791274504/messages",
-            json=payload, headers=headers, timeout=10
+            json=payload, headers=headers, timeout=200
         )
         logging.info(f"📤 WhatsApp reply status: {resp.status_code}  {resp.text[:100]}")
     except Exception:
