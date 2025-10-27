@@ -1,4 +1,9 @@
-import os, json, requests, time, logging, threading
+import os
+import json
+import requests
+import time
+import logging
+import threading
 from flask import Flask, request, jsonify
 from persistqueue import SQLiteQueue
 
@@ -6,12 +11,19 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
 JOB_DB = "/tmp/job_queue.db"
+q_lock = threading.Lock()          # serialize DB creation
 
 # ------------------------------------------------------------------
-#  factory – each thread opens its own queue (SQLite connection)
+#  thread-safe queue factory (no WAL → no "database is locked")
 # ------------------------------------------------------------------
 def get_queue():
-    return SQLiteQueue(JOB_DB, auto_commit=True, multithreading=True)
+    with q_lock:
+        return SQLiteQueue(
+            JOB_DB,
+            auto_commit=True,
+            multithreading=True,
+            wal=False
+        )
 
 HF_SPACE_ASK = "https://nimroddev-rag-space-v2.hf.space/ask"
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
@@ -20,8 +32,8 @@ PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID", "852540791274504")
 # ------------------------------------------------------------------
 #  WhatsApp reply helper
 # ------------------------------------------------------------------
-def _send_whatsapp_reply(to, body):
-    url = f"https://graph.facebook.com/v22.0/852540791274504/messages"
+def _send_whatsapp_reply(to: str, body: str) -> None:
+    url = f"https://graph.facebook.com/v18.0/852540791274504/messages"
     headers = {
         "Authorization": f"Bearer {WHATSAPP_TOKEN}",
         "Content-Type": "application/json"
@@ -40,9 +52,9 @@ def _send_whatsapp_reply(to, body):
         logging.exception("📤 WhatsApp send failed: %s", e)
 
 # ------------------------------------------------------------------
-#  background worker thread
+#  background worker thread (same free container)
 # ------------------------------------------------------------------
-def _query_rag(question):
+def _query_rag(question: str) -> str:
     for attempt in range(3):
         try:
             r = requests.post(HF_SPACE_ASK, json={"question": question}, timeout=60)
@@ -63,11 +75,12 @@ def _worker():
         except Exception as e:
             logging.exception("Job failed: %s", e)
 
+# start single background thread (dies with container)
 worker_thread = threading.Thread(target=_worker, daemon=True)
 worker_thread.start()
 
 # ------------------------------------------------------------------
-#  webhook – main thread
+#  webhook – returns instantly
 # ------------------------------------------------------------------
 @app.route("/webhook", methods=["POST"])
 def webhook():
