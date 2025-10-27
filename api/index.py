@@ -1,4 +1,4 @@
-# api/index.py – WhatsApp ↔️ FastAPI RAG Bridge (Flask)
+# api/index.py – WhatsApp ↔️ HF-Space RAG Bridge (Flask)
 from flask import Flask, request, jsonify
 import os, requests, hmac, hashlib, logging, time
 
@@ -9,8 +9,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(
 ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN")
 APP_SECRET   = os.getenv("META_APP_SECRET", "")
 PHONE_ID     = os.getenv("META_PHONE_NUMBER_ID")
-# NEW ➜ your Render service
-RAG_ENDPOINT = os.getenv("RAG_ENDPOINT", "https://whatsapp-webhook-hpzn.onrender.com/webhook").strip().rstrip("/")
+# NEW ➜ HF-Space (NOT Render)
+HF_SPACE     = os.getenv("RAG_ENDPOINT", "https://huggingface.co/spaces/NimrodDev/RAG_SPACE/webhook").strip().rstrip("/")
 VERIFY_TOKEN = os.getenv("META_VERIFY_TOKEN", "ldlamaki2025")
 
 # ----------------- SIGNATURE -----------------
@@ -41,6 +41,20 @@ def verify_webhook():
         return challenge, 200
     return "Forbidden", 403
 
+# ----------------- WARM-UP HF -----------------
+def _wait_for_hf_space(max_wait: int = 120):
+    """Cold-start guard: ping HF until 200 or timeout."""
+    for t in range(0, max_wait, 5):
+        try:
+            r = requests.get(HF_SPACE.replace("/webhook", ""), timeout=10)
+            if r.status_code == 200:
+                logging.info("🌡️  HF-Space is warm")
+                return
+        except Exception as e:
+            logging.info(f"🌡️  HF-Space cold ({t}s) – {e}")
+        time.sleep(5)
+    logging.warning("🌡️  HF-Space still cold – proceeding anyway")
+
 # ----------------- HANDLE MESSAGE -----------------
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -64,18 +78,24 @@ def webhook():
     from_number, text = msg["from"], msg["text"]["body"].strip()
     logging.info(f"💬 From {from_number}: {text}")
 
+    # ---------- wait for HF to be warm (first msg only) ----------
+    _wait_for_hf_space()
+
     # ---------- RAG query with retry ----------
     reply = "I'm having a brief technical issue—please try again in a moment."
-    for attempt in range(1, 4):
+    for attempt in range(1, 5):
         try:
-            logging.info(f"🧠 Attempt {attempt} → {RAG_ENDPOINT}")
-            # NEW ➜ send question + optional human flag
-            r = requests.post(RAG_ENDPOINT, json={"question": text, "from_human": False}, timeout=25)
+            logging.info(f"🧠 Attempt {attempt} → {HF_SPACE}")
+            r = requests.post(
+                HF_SPACE,
+                json={"question": text, "from_human": False},
+                timeout=60          # <-- was 25, now 60
+            )
             r.raise_for_status()
             answer = r.json().get("answer")
             if answer is None:               # human-agent window active
                 logging.info("🤫 Human agent active – bot stays silent")
-                return "OK", 200             # no reply sent
+                return "OK", 200
             reply = answer or "I'm not sure how to answer that right now."
             logging.info(f"✅ RAG reply: {reply}")
             break
