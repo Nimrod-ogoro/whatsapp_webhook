@@ -1,34 +1,30 @@
 import os
 import json
 import requests
+import time
 import logging
+import threading
 from flask import Flask, request, jsonify
-from rq import Queue
-from redis import Redis
+from persist_queue import SQLiteQueue
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
 # ------------------------------------------------------------------
-#  Redis connection – falls back to localhost for local dev
+#  FREE SQLite job queue (persists on disk, zero extra services)
 # ------------------------------------------------------------------
-redis_conn = Redis.from_url(os.getenv("REDIS_URL", "redis://red-d3vqne3ipnbc739kspcg:6379"),
-                            socket_connect_timeout=5,
-                            socket_timeout=5)
-q = Queue(connection=redis_conn, default_timeout=300)  # 5 min job limit
+JOB_DB = "/tmp/job_queue.db"          # survives container sleeps
+q = SQLiteQueue(JOB_DB, auto_commit=True)
 
-# ------------------------------------------------------------------
-#  config
-# ------------------------------------------------------------------
 HF_SPACE_ASK = "https://nimroddev-rag-space-v2.hf.space/ask"
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
-PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
+PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID", "852540791274504")
 
 # ------------------------------------------------------------------
-#  background job – runs inside RQ worker
+#  WhatsApp reply helper
 # ------------------------------------------------------------------
 def _send_whatsapp_reply(to: str, body: str) -> None:
-    url = f"https://graph.facebook.com/v18.0/852540791274504/messages"
+    url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
     headers = {
         "Authorization": f"Bearer {WHATSAPP_TOKEN}",
         "Content-Type": "application/json"
@@ -46,28 +42,32 @@ def _send_whatsapp_reply(to: str, body: str) -> None:
     except Exception as e:
         logging.exception("📤 WhatsApp send failed: %s", e)
 
-
-def _call_rag_and_reply(question: str, from_number: str) -> None:
-    """
-    Background job: wake HF space → query → send WhatsApp reply.
-    """
+# ------------------------------------------------------------------
+#  background thread (runs inside same free container)
+# ------------------------------------------------------------------
+def _query_rag(question: str) -> str:
     for attempt in range(3):
         try:
-            logging.info("🧠 Attempt %s → %s", attempt + 1, HF_SPACE_ASK)
-            r = requests.post(HF_SPACE_ASK,
-                              json={"question": question, "from_human": False},
-                              timeout=60)
+            r = requests.post(HF_SPACE_ASK, json={"question": question}, timeout=60)
             r.raise_for_status()
-            answer = r.json().get("answer", "No answer returned.")
-            break
+            return r.json().get("answer", "No answer returned.")
         except Exception as e:
             logging.warning("RAG call %s – %s", attempt, e)
             time.sleep(5)
-    else:
-        answer = "😞 Our AI is asleep right now, please try later."
+    return "😞 Our AI is asleep right now, please try later."
 
-    _send_whatsapp_reply(from_number, answer)
+def _worker():
+    while True:
+        job = q.get()                      # blocks until job appears
+        try:
+            answer = _query_rag(job["question"])
+            _send_whatsapp_reply(job["from_number"], answer)
+        except Exception as e:
+            logging.exception("Job failed: %s", e)
 
+# start single background thread (dies with container)
+worker_thread = threading.Thread(target=_worker, daemon=True)
+worker_thread.start()
 
 # ------------------------------------------------------------------
 #  webhook – returns instantly
@@ -77,7 +77,6 @@ def webhook():
     data = request.get_json(force=True)
     logging.info("📩 Incoming: %s", data)
 
-    # ignore status updates
     if data.get("entry", [{}])[0].get("changes", [{}])[0].get("value", {}).get("statuses"):
         return jsonify(ok=True), 200
 
@@ -85,13 +84,9 @@ def webhook():
     text = msg["text"]["body"]
     from_number = msg["from"]
 
-    q.enqueue(_call_rag_and_reply, text, from_number)
+    q.put({"question": text, "from_number": from_number})
     return jsonify(ok=True), 200
 
-
-# ------------------------------------------------------------------
-#  health check
-# ------------------------------------------------------------------
 @app.route("/", methods=["GET"])
 def index():
     return "WhatsApp webhook OK", 200
