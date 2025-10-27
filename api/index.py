@@ -46,7 +46,7 @@ def _wait_for_hf_space(max_wait: int = 120):
     """Cold-start guard: ping HF until 200 or timeout."""
     for t in range(0, max_wait, 5):
         try:
-            r = requests.get(HF_SPACE.replace("/ask", ""), timeout=10)
+            r = requests.get(HF_SPACE.replace("/ask", ""), timeout=60)
             if r.status_code == 200:
                 logging.info("🌡️  HF-Space is warm")
                 return
@@ -117,7 +117,7 @@ def webhook():
     try:
         resp = requests.post(
             f"https://graph.facebook.com/v22.0/852540791274504/messages",
-            json=payload, headers=headers, timeout=200
+            json=payload, headers=headers, timeout=20
         )
         logging.info(f"📤 WhatsApp reply status: {resp.status_code}  {resp.text[:100]}")
     except Exception:
