@@ -1,20 +1,17 @@
-import os
-import json
-import requests
-import time
-import logging
-import threading
+import os, json, requests, time, logging, threading
 from flask import Flask, request, jsonify
 from persistqueue import SQLiteQueue
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
+JOB_DB = "/tmp/job_queue.db"
+
 # ------------------------------------------------------------------
-#  FREE SQLite job queue (persists on disk, zero extra services)
+#  factory – each thread opens its own queue (SQLite connection)
 # ------------------------------------------------------------------
-JOB_DB = "/tmp/job_queue.db"          # survives container sleeps
-q = SQLiteQueue(JOB_DB, auto_commit=True)
+def get_queue():
+    return SQLiteQueue(JOB_DB, auto_commit=True, multithreading=True)
 
 HF_SPACE_ASK = "https://nimroddev-rag-space-v2.hf.space/ask"
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
@@ -23,8 +20,8 @@ PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID", "852540791274504")
 # ------------------------------------------------------------------
 #  WhatsApp reply helper
 # ------------------------------------------------------------------
-def _send_whatsapp_reply(to: str, body: str) -> None:
-    url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
+def _send_whatsapp_reply(to, body):
+    url = f"https://graph.facebook.com/v22.0/852540791274504/messages"
     headers = {
         "Authorization": f"Bearer {WHATSAPP_TOKEN}",
         "Content-Type": "application/json"
@@ -43,9 +40,9 @@ def _send_whatsapp_reply(to: str, body: str) -> None:
         logging.exception("📤 WhatsApp send failed: %s", e)
 
 # ------------------------------------------------------------------
-#  background thread (runs inside same free container)
+#  background worker thread
 # ------------------------------------------------------------------
-def _query_rag(question: str) -> str:
+def _query_rag(question):
     for attempt in range(3):
         try:
             r = requests.post(HF_SPACE_ASK, json={"question": question}, timeout=60)
@@ -57,20 +54,20 @@ def _query_rag(question: str) -> str:
     return "😞 Our AI is asleep right now, please try later."
 
 def _worker():
+    q = get_queue()               # open queue in THIS thread
     while True:
-        job = q.get()                      # blocks until job appears
+        job = q.get()
         try:
             answer = _query_rag(job["question"])
             _send_whatsapp_reply(job["from_number"], answer)
         except Exception as e:
             logging.exception("Job failed: %s", e)
 
-# start single background thread (dies with container)
 worker_thread = threading.Thread(target=_worker, daemon=True)
 worker_thread.start()
 
 # ------------------------------------------------------------------
-#  webhook – returns instantly
+#  webhook – main thread
 # ------------------------------------------------------------------
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -84,7 +81,7 @@ def webhook():
     text = msg["text"]["body"]
     from_number = msg["from"]
 
-    q.put({"question": text, "from_number": from_number})
+    get_queue().put({"question": text, "from_number": from_number})
     return jsonify(ok=True), 200
 
 @app.route("/", methods=["GET"])
