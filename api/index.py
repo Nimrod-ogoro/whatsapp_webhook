@@ -12,7 +12,7 @@ logging.basicConfig(level=logging.INFO)
 # ------------------------------------------------------------------
 #  Redis connection – falls back to localhost for local dev
 # ------------------------------------------------------------------
-redis_conn = Redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"),
+redis_conn = Redis.from_url(os.getenv("REDIS_URL", "redis://red-d3vqne3ipnbc739kspcg:6379"),
                             socket_connect_timeout=5,
                             socket_timeout=5)
 q = Queue(connection=redis_conn, default_timeout=300)  # 5 min job limit
