@@ -9,7 +9,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(
 ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN")
 APP_SECRET   = os.getenv("META_APP_SECRET", "")
 PHONE_ID     = os.getenv("META_PHONE_NUMBER_ID")
-HF_SPACE     = os.getenv("RAG_ENDPOINT", "https://nimroddev-rag-space.hf.space/ask").strip().rstrip("/")
+# NEW ➜ your Render service
+RAG_ENDPOINT = os.getenv("RAG_ENDPOINT", "https://whatsapp-webhook-hpzn.onrender.com/webhook").strip().rstrip("/")
 VERIFY_TOKEN = os.getenv("META_VERIFY_TOKEN", "ldlamaki2025")
 
 # ----------------- SIGNATURE -----------------
@@ -67,10 +68,15 @@ def webhook():
     reply = "I'm having a brief technical issue—please try again in a moment."
     for attempt in range(1, 4):
         try:
-            logging.info(f"🧠 Attempt {attempt} → {HF_SPACE}")
-            r = requests.post(HF_SPACE, json={"question": text}, timeout=25)
+            logging.info(f"🧠 Attempt {attempt} → {RAG_ENDPOINT}")
+            # NEW ➜ send question + optional human flag
+            r = requests.post(RAG_ENDPOINT, json={"question": text, "from_human": False}, timeout=25)
             r.raise_for_status()
-            reply = r.json().get("answer", "I'm not sure how to answer that right now.")
+            answer = r.json().get("answer")
+            if answer is None:               # human-agent window active
+                logging.info("🤫 Human agent active – bot stays silent")
+                return "OK", 200             # no reply sent
+            reply = answer or "I'm not sure how to answer that right now."
             logging.info(f"✅ RAG reply: {reply}")
             break
         except Exception as e:
@@ -98,4 +104,3 @@ def webhook():
         logging.exception("❌ WhatsApp send failed")
 
     return "OK", 200
-
