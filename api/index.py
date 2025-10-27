@@ -10,15 +10,11 @@ from persistqueue import SQLiteQueue
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
+# ------------------------------------------------------------------
+#  FREE SQLite queue (one shared, thread-safe, no Redis, no lock)
+# ------------------------------------------------------------------
 JOB_DB = "/tmp/job_queue.db"
-q_lock = threading.Lock()
-
-# ------------------------------------------------------------------
-#  thread-safe queue factory (SQLite, no WAL, no Redis)
-# ------------------------------------------------------------------
-def get_queue():
-    with q_lock:
-        return SQLiteQueue(JOB_DB, auto_commit=True, multithreading=True)
+q = SQLiteQueue(JOB_DB, auto_commit=True, multithreading=True)
 
 HF_SPACE_ASK = "https://nimroddev-rag-space-v2.hf.space/ask"
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
@@ -28,7 +24,7 @@ PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID", "852540791274504")
 #  WhatsApp reply helper
 # ------------------------------------------------------------------
 def _send_whatsapp_reply(to: str, body: str) -> None:
-    url = f"https://graph.facebook.com/v22.0/852540791274504/messages"
+    url = f"https://graph.facebook.com/v22.0/{PHONE_NUMBER_ID}/messages"
     headers = {
         "Authorization": f"Bearer {WHATSAPP_TOKEN}",
         "Content-Type": "application/json"
@@ -61,7 +57,6 @@ def _query_rag(question: str) -> str:
     return "😞 Our AI is asleep right now, please try later."
 
 def _worker():
-    q = get_queue()
     while True:
         job = q.get()
         try:
@@ -89,7 +84,7 @@ def webhook():
     text = msg["text"]["body"]
     from_number = msg["from"]
 
-    get_queue().put({"question": text, "from_number": from_number})
+    q.put({"question": text, "from_number": from_number})
     return jsonify(ok=True), 200
 
 @app.route("/", methods=["GET"])
