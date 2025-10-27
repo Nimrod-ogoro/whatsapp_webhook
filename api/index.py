@@ -54,7 +54,7 @@ def _query_rag(question: str) -> str:
         except Exception as e:
             logging.warning("RAG call %s – %s", attempt, e)
             time.sleep(5)
-    return "😞 Our AI is asleep right now, please try later."
+    return "😞 Our AI is asleep right now, please be patient a human agent will be with you shortly."
 
 def _worker():
     while True:
