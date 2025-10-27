@@ -1,126 +1,97 @@
-# api/index.py – WhatsApp ↔️ HF-Space RAG Bridge (Flask)
+import os
+import json
+import requests
+import logging
 from flask import Flask, request, jsonify
-import os, requests, hmac, hashlib, logging, time
+from rq import Queue
+from redis import Redis
 
 app = Flask(__name__)
-logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
+logging.basicConfig(level=logging.INFO)
 
-# ----------------- CREDS -----------------
-ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN")
-APP_SECRET   = os.getenv("META_APP_SECRET", "")
-PHONE_ID     = os.getenv("META_PHONE_NUMBER_ID")
-# FINAL ➜ correct HF-Space endpoint
-HF_SPACE     = os.getenv("RAG_ENDPOINT", "https://nimroddev-rag-space-v2.hf.space/ask").strip().rstrip("/")
-VERIFY_TOKEN = os.getenv("META_VERIFY_TOKEN", "ldlamaki2025")
+# ------------------------------------------------------------------
+#  Redis connection – falls back to localhost for local dev
+# ------------------------------------------------------------------
+redis_conn = Redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"),
+                            socket_connect_timeout=5,
+                            socket_timeout=5)
+q = Queue(connection=redis_conn, default_timeout=300)  # 5 min job limit
 
-# ----------------- SIGNATURE -----------------
-def verify_signature(payload: bytes, sig: str) -> bool:
-    if not APP_SECRET:
-        return True
-    try:
-        mac = hmac.new(APP_SECRET.encode(), payload, hashlib.sha256).hexdigest()
-        return hmac.compare_digest(f"sha256={mac}", sig)
-    except Exception:
-        logging.exception("Signature check failed")
-        return False
+# ------------------------------------------------------------------
+#  config
+# ------------------------------------------------------------------
+HF_SPACE_ASK = "https://nimroddev-rag-space-v2.hf.space/ask"
+WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
+PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
 
-# ----------------- ROOT (health) -----------------
-@app.route("/", methods=["GET"])
-def index():
-    return jsonify({"status": "ok", "service": "whatsapp-rag-bridge"}), 200
-
-# ----------------- VERIFY WEBHOOK -----------------
-@app.route("/webhook", methods=["GET"])
-def verify_webhook():
-    mode  = request.args.get("hub.mode")
-    token = request.args.get("hub.verify_token")
-    challenge = request.args.get("hub.challenge")
-    logging.info(f"🔍 Verification: mode={mode}, token={token}, challenge={challenge}")
-    if mode == "subscribe" and token == VERIFY_TOKEN:
-        logging.info("✅ Webhook verified")
-        return challenge, 200
-    return "Forbidden", 403
-
-# ----------------- WARM-UP HF -----------------
-def _wait_for_hf_space(max_wait: int = 120):
-    """Cold-start guard: ping HF until 200 or timeout."""
-    for t in range(0, max_wait, 5):
-        try:
-            r = requests.get(HF_SPACE.replace("/ask", ""), timeout=60)
-            if r.status_code == 200:
-                logging.info("🌡️  HF-Space is warm")
-                return
-        except Exception as e:
-            logging.info(f"🌡️  HF-Space cold ({t}s) – {e}")
-        time.sleep(5)
-    logging.warning("🌡️  HF-Space still cold – proceeding anyway")
-
-# ----------------- HANDLE MESSAGE -----------------
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    logging.info("📦 FULL HEADERS: %s", dict(request.headers))
-    logging.info("📦 RAW BODY: %s", request.get_data(as_text=True))
-    signature = request.headers.get("X-Hub-Signature-256", "")
-    if APP_SECRET and not verify_signature(request.get_data(), signature):
-        return "Bad signature", 403
-
-    data = request.get_json(silent=True) or {}
-    logging.info(f"📩 Incoming: {data}")
-
-    try:
-        msg = data["entry"][0]["changes"][0]["value"]["messages"][0]
-    except (KeyError, IndexError):
-        return "OK", 200
-
-    if msg.get("type") != "text":
-        return "OK", 200
-
-    from_number, text = msg["from"], msg["text"]["body"].strip()
-    logging.info(f"💬 From {from_number}: {text}")
-
-    # ---------- wait for HF to be warm (first msg only) ----------
-    _wait_for_hf_space()
-
-    # ---------- RAG query with retry ----------
-    reply = "I'm having a brief technical issue—please try again in a moment."
-    for attempt in range(1, 5):
-        try:
-            logging.info(f"🧠 Attempt {attempt} → {HF_SPACE}")
-            r = requests.post(
-                HF_SPACE,
-                json={"question": text, "from_human": False},
-                timeout=60          # 60 s cold-start tolerance
-            )
-            r.raise_for_status()
-            answer = r.json().get("answer")
-            if answer is None:               # human-agent window active
-                logging.info("🤫 Human agent active – bot stays silent")
-                return "OK", 200
-            reply = answer or "I'm not sure how to answer that right now."
-            logging.info(f"✅ RAG reply: {reply}")
-            break
-        except Exception as e:
-            logging.warning(f"Attempt {attempt} failed: {e}")
-            time.sleep(2 ** attempt)
-    else:
-        logging.error("🔥 All RAG attempts failed – using fallback")
-
-    # ---------- WhatsApp reply ----------
+# ------------------------------------------------------------------
+#  background job – runs inside RQ worker
+# ------------------------------------------------------------------
+def _send_whatsapp_reply(to: str, body: str) -> None:
+    url = f"https://graph.facebook.com/v18.0/852540791274504/messages"
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json"
+    }
     payload = {
         "messaging_product": "whatsapp",
-        "to": from_number,
+        "to": to,
         "type": "text",
-        "text": {"body": reply},
+        "text": {"body": body}
     }
-    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}", "Content-Type": "application/json"}
-
     try:
-        resp = requests.post(
-            f"https://graph.facebook.com/v22.0/852540791274504/messages",
-            json=payload, headers=headers, timeout=20
-        )
-        logging.info(f"📤 WhatsApp reply status: {resp.status_code}  {resp.text[:100]}")
-    except Exception:
-        logging.exception("❌ WhatsApp send failed")
+        r = requests.post(url, headers=headers, json=payload, timeout=10)
+        r.raise_for_status()
+        logging.info("📤 WhatsApp reply status: %s  %s", r.status_code, r.text)
+    except Exception as e:
+        logging.exception("📤 WhatsApp send failed: %s", e)
 
-    return "OK", 200
+
+def _call_rag_and_reply(question: str, from_number: str) -> None:
+    """
+    Background job: wake HF space → query → send WhatsApp reply.
+    """
+    for attempt in range(3):
+        try:
+            logging.info("🧠 Attempt %s → %s", attempt + 1, HF_SPACE_ASK)
+            r = requests.post(HF_SPACE_ASK,
+                              json={"question": question, "from_human": False},
+                              timeout=60)
+            r.raise_for_status()
+            answer = r.json().get("answer", "No answer returned.")
+            break
+        except Exception as e:
+            logging.warning("RAG call %s – %s", attempt, e)
+            time.sleep(5)
+    else:
+        answer = "😞 Our AI is asleep right now, please try later."
+
+    _send_whatsapp_reply(from_number, answer)
+
+
+# ------------------------------------------------------------------
+#  webhook – returns instantly
+# ------------------------------------------------------------------
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    data = request.get_json(force=True)
+    logging.info("📩 Incoming: %s", data)
+
+    # ignore status updates
+    if data.get("entry", [{}])[0].get("changes", [{}])[0].get("value", {}).get("statuses"):
+        return jsonify(ok=True), 200
+
+    msg = data["entry"][0]["changes"][0]["value"]["messages"][0]
+    text = msg["text"]["body"]
+    from_number = msg["from"]
+
+    q.enqueue(_call_rag_and_reply, text, from_number)
+    return jsonify(ok=True), 200
+
+
+# ------------------------------------------------------------------
+#  health check
+# ------------------------------------------------------------------
+@app.route("/", methods=["GET"])
+def index():
+    return "WhatsApp webhook OK", 200
