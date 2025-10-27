@@ -11,19 +11,14 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
 JOB_DB = "/tmp/job_queue.db"
-q_lock = threading.Lock()          # serialize DB creation
+q_lock = threading.Lock()
 
 # ------------------------------------------------------------------
-#  thread-safe queue factory (no WAL → no "database is locked")
+#  thread-safe queue factory (SQLite, no WAL, no Redis)
 # ------------------------------------------------------------------
 def get_queue():
     with q_lock:
-        return SQLiteQueue(
-            JOB_DB,
-            auto_commit=True,
-            multithreading=True,
-            wal=False
-        )
+        return SQLiteQueue(JOB_DB, auto_commit=True, multithreading=True)
 
 HF_SPACE_ASK = "https://nimroddev-rag-space-v2.hf.space/ask"
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
@@ -33,7 +28,7 @@ PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID", "852540791274504")
 #  WhatsApp reply helper
 # ------------------------------------------------------------------
 def _send_whatsapp_reply(to: str, body: str) -> None:
-    url = f"https://graph.facebook.com/v18.0/852540791274504/messages"
+    url = f"https://graph.facebook.com/v22.0/852540791274504/messages"
     headers = {
         "Authorization": f"Bearer {WHATSAPP_TOKEN}",
         "Content-Type": "application/json"
@@ -66,7 +61,7 @@ def _query_rag(question: str) -> str:
     return "😞 Our AI is asleep right now, please try later."
 
 def _worker():
-    q = get_queue()               # open queue in THIS thread
+    q = get_queue()
     while True:
         job = q.get()
         try:
@@ -75,7 +70,7 @@ def _worker():
         except Exception as e:
             logging.exception("Job failed: %s", e)
 
-# start single background thread (dies with container)
+# start single background thread (daemon dies with container)
 worker_thread = threading.Thread(target=_worker, daemon=True)
 worker_thread.start()
 
