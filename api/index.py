@@ -9,8 +9,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(
 ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN")
 APP_SECRET   = os.getenv("META_APP_SECRET", "")
 PHONE_ID     = os.getenv("META_PHONE_NUMBER_ID")
-# NEW ➜ HF-Space (NOT Render)
-HF_SPACE     = os.getenv("RAG_ENDPOINT", "https://huggingface.co/spaces/NimrodDev/RAG_SPACE/webhook").strip().rstrip("/")
+# FINAL ➜ correct HF-Space endpoint
+HF_SPACE     = os.getenv("RAG_ENDPOINT", "https://nimroddev-rag-space.hf.space/ask").strip().rstrip("/")
 VERIFY_TOKEN = os.getenv("META_VERIFY_TOKEN", "ldlamaki2025")
 
 # ----------------- SIGNATURE -----------------
@@ -46,7 +46,7 @@ def _wait_for_hf_space(max_wait: int = 120):
     """Cold-start guard: ping HF until 200 or timeout."""
     for t in range(0, max_wait, 5):
         try:
-            r = requests.get(HF_SPACE.replace("/webhook", ""), timeout=10)
+            r = requests.get(HF_SPACE.replace("/ask", ""), timeout=10)
             if r.status_code == 200:
                 logging.info("🌡️  HF-Space is warm")
                 return
@@ -89,7 +89,7 @@ def webhook():
             r = requests.post(
                 HF_SPACE,
                 json={"question": text, "from_human": False},
-                timeout=60          # <-- was 25, now 60
+                timeout=60          # 60 s cold-start tolerance
             )
             r.raise_for_status()
             answer = r.json().get("answer")
