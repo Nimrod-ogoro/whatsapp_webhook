@@ -21,7 +21,7 @@ WHATSAPP_TOKEN = os.getenv("META_ACCESS_TOKEN",)
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID", "852540791274504")
 
 # ------------------------------------------------------------------
-#  WhatsApp reply helper
+#  WhatsApp reply helperRRRRR
 # ------------------------------------------------------------------
 def _send_whatsapp_reply(to: str, body: str) -> None:
     url = f"https://graph.facebook.com/v22.0/852540791274504/messages"
