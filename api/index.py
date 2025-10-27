@@ -5,7 +5,7 @@ import time
 import logging
 import threading
 from flask import Flask, request, jsonify
-from persist_queue import SQLiteQueue
+from persistqueue import SQLiteQueue
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)

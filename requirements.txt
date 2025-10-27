@@ -1,4 +1,4 @@
 flask>=2.3
 gunicorn>=21.0
 requests>=2.31
-persist-queue>=0.7.0
+persist-queue>=0.7.00
