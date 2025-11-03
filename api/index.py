@@ -18,9 +18,10 @@ JOB_DB = "/tmp/job_queue.db"
 q = SQLiteQueue(JOB_DB, auto_commit=True, multithreading=True)
 
 # ------------------------------------------------------------------
-#  Config
+#  Config ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
 # ------------------------------------------------------------------
-HF_SPACE_ASK = os.getenv("HF_SPACE_ASK", "https://nimroddev-rag-space-v2.hf.space/ask")
+HF_SPACE_URL = os.getenv("HF_SPACE_URL", "https://NimrodDev-rag-bot.hf.space/whatsapp")
+VERIFY_SECRET = os.getenv("WEBHOOK_VERIFY")   # same secret you set in HF Space
 WHATSAPP_TOKEN = os.getenv("META_ACCESS_TOKEN")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID", "852540791274504")
 
@@ -42,29 +43,31 @@ def _send_whatsapp_reply(to: str, body: str) -> None:
     try:
         r = requests.post(url, headers=headers, json=payload, timeout=10)
         r.raise_for_status()
-        logging.info("📤 WhatsApp reply: %s  %s", r.status_code, r.text)
+        logging.info("📤 WhatsApp reply: %s %s", r.status_code, r.text)
     except Exception as e:
         logging.exception("📤 WhatsApp send failed: %s", e)
 
 # ------------------------------------------------------------------
-#  RAG call with memory (includes phone number)
+#  RAG call WITH shared-secret verify field
 # ------------------------------------------------------------------
 def _query_rag(phone: str, question: str) -> str:
-    """Call the FastAPI /ask endpoint with memory context"""
-    payload = {"phone": phone, "question": question}
+    payload = {
+        "from": phone,
+        "text": question,
+        "verify": VERIFY_SECRET
+    }
     for attempt in range(3):
         try:
-            r = requests.post(HF_SPACE_ASK, json=payload, timeout=90)
+            r = requests.post(HF_SPACE_URL, json=payload, timeout=90)
             r.raise_for_status()
-            data = r.json()
-            return data.get("answer", "No answer returned.")
+            return r.json().get("reply", "No reply returned.")
         except Exception as e:
             logging.warning("RAG call attempt %s failed: %s", attempt + 1, e)
             time.sleep(5)
     return "😞 Amina is currently unavailable, please wait for a human agent."
 
 # ------------------------------------------------------------------
-#  Background worker (processes queued messages)
+#  Background worker
 # ------------------------------------------------------------------
 def _worker():
     while True:
@@ -75,19 +78,17 @@ def _worker():
         except Exception as e:
             logging.exception("Job failed: %s", e)
 
-# Start worker thread (runs forever in container)
 worker_thread = threading.Thread(target=_worker, daemon=True)
 worker_thread.start()
 
 # ------------------------------------------------------------------
-#  Webhook endpoint
+#  Webhook endpoint (Render)
 # ------------------------------------------------------------------
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.get_json(force=True)
     logging.info("📩 Incoming: %s", data)
 
-    # Ignore delivery/read statuses
     if data.get("entry", [{}])[0].get("changes", [{}])[0].get("value", {}).get("statuses"):
         return jsonify(ok=True), 200
 
@@ -96,7 +97,6 @@ def webhook():
         text = msg["text"]["body"]
         from_number = msg["from"]
 
-        # Push message to background job queue
         q.put({"question": text, "from_number": from_number})
         return jsonify(ok=True), 200
     except Exception as e:
