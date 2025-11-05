@@ -1,15 +1,15 @@
-import os, json, requests, time, logging, threading, httpx
+import os, json, time, logging, threading, httpx
 from flask import Flask, request, jsonify
 from persistqueue import SQLiteQueue
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
-# ----------  CONFIG  ----------
+# ----------  CONFIG  (strip once, fallback empty string) ----------
 JOB_DB         = "/tmp/job_queue.db"
 HF_SPACE_URL   = os.getenv("HF_SPACE_URL", "https://nimroddev-rag-bot.hf.space/whatsapp").strip()
-VERIFY_SECRET  = os.getenv("WEBHOOK_VERIFY")
-WHATSAPP_TOKEN = os.getenv("META_ACCESS_TOKEN")
+VERIFY_SECRET  = os.getenv("WEBHOOK_VERIFY", "").strip()
+WHATSAPP_TOKEN = os.getenv("META_ACCESS_TOKEN", "").strip()
 PHONE_ID       = os.getenv("PHONE_NUMBER_ID", "852540791274504").strip()
 
 # ----------  QUEUE  ----------
@@ -39,7 +39,7 @@ def query_hf(phone: str, text: str) -> str:
         try:
             r = httpx.post(HF_SPACE_URL, json=payload, timeout=90)
             r.raise_for_status()
-            return r.json().get("reply", "No reply returned.")
+            return r.json().get("reply", "No reply returned.").strip() or "🤖 Amina had nothing to say – a human will jump in."
         except Exception as e:
             logging.warning("HF call %s failed: %s", attempt + 1, e)
             time.sleep(5)
@@ -70,19 +70,17 @@ def webhook():
     data = request.get_json(force=True)
     logging.info("📩 %s", data)
 
-    # 1.  ACK receipts instantly
     if data.get("entry", [{}])[0].get("changes", [{}])[0].get("value", {}).get("statuses"):
         return jsonify(ok=True), 200
 
     try:
-        msg  = data["entry"][0]["changes"][0]["value"]["messages"][0]
+        msg   = data["entry"][0]["changes"][0]["value"]["messages"][0]
         phone = msg["from"]
 
         if msg.get("type") == "text":
             q.put({"phone": phone, "text": msg["text"]["body"]})
         elif msg.get("type") == "voice":
             media_url = download_media(msg["voice"]["id"])
-            # send audio URL to HF; HF will transcribe & answer
             q.put({"phone": phone, "text": f"[voice:{media_url}]"})
         else:
             logging.warning("unsupported type: %s", msg.get("type"))
