@@ -1,3 +1,9 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+WhatsApp → HF-Space webhook relay
+Keeps itself alive + 120 s timeouts everywhere
+"""
 import os, json, time, logging, threading, httpx
 from flask import Flask, request, jsonify
 from persistqueue import SQLiteQueue
@@ -5,7 +11,7 @@ from persistqueue import SQLiteQueue
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
-# ----------  CONFIG  (strip once, fallback empty string) ----------
+# ----------  CONFIG  ----------
 JOB_DB         = "/tmp/job_queue.db"
 HF_SPACE_URL   = os.getenv("HF_SPACE_URL", "https://nimroddev-rag-bot.hf.space/whatsapp").strip()
 VERIFY_SECRET  = os.getenv("WEBHOOK_VERIFY", "").strip()
@@ -37,9 +43,10 @@ def query_hf(phone: str, text: str) -> str:
     payload = {"from": phone, "text": text, "verify": VERIFY_SECRET}
     for attempt in range(3):
         try:
-            r = httpx.post(HF_SPACE_URL, json=payload, timeout=90)
+            r = httpx.post(HF_SPACE_URL, json=payload, timeout=120)   # ← 120 s
             r.raise_for_status()
-            return r.json().get("reply", "No reply returned.").strip() or "🤖 Amina had nothing to say – a human will jump in."
+            return r.json().get("reply", "No reply returned.").strip() or \
+                   "🤖 Amina had nothing to say – a human will jump in."
         except Exception as e:
             logging.warning("HF call %s failed: %s", attempt + 1, e)
             time.sleep(5)
@@ -63,6 +70,18 @@ def worker():
             logging.exception("job failed: %s", e)
 
 threading.Thread(target=worker, daemon=True).start()
+
+# ----------  KEEP-ALIVE ----------
+def keepalive():
+    while True:
+        try:
+            r = httpx.get(HF_SPACE_URL.split("/whatsapp")[0], timeout=30)
+            logging.info("keep-alive ping: %s", r.status_code)
+        except Exception as e:
+            logging.warning("keep-alive failed: %s", e)
+        time.sleep(300)   # every 5 min
+
+threading.Thread(target=keepalive, daemon=True).start()
 
 # ----------  WEBHOOK  ----------
 @app.route("/webhook", methods=["POST"])
@@ -95,4 +114,5 @@ def health():
     return "Webhook OK", 200
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
+    port = int(os.getenv("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
