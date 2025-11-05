@@ -23,7 +23,7 @@ q = SQLiteQueue(JOB_DB, auto_commit=True, multithreading=True)
 
 # ----------  HELPERS  ----------
 def send_whatsapp(to: str, body: str) -> None:
-    url = f"https://graph.facebook.com/v22.0/{PHONE_ID}/messages"
+    url = f"https://graph.facebook.com/v22.0/852540791274504/messages"
     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
     payload = {
         "messaging_product": "whatsapp",
