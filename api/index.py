@@ -31,7 +31,15 @@ PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID", "852540791274504")
 def _send_whatsapp_reply(to: str, body: str) -> None:
     url   = f"https://graph.facebook.com/v22.0/{PHONE_NUMBER_ID}/messages"
     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
-    payload = {"messaging_product": "whatsapp", "to": to, "type": "text", "text": {"body": body}}
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": str(to),
+        "type": "text",
+        "text": {"body": body[:4096]}  # ≤ 4096, never empty
+    }
+    # DEBUG: remove after first successful reply
+    logging.info("📤 DEBUG payload: %s", json.dumps(payload, indent=2))
     try:
         r = requests.post(url, headers=headers, json=payload, timeout=10)
         r.raise_for_status()
@@ -62,6 +70,8 @@ def _worker():
         job = q.get()
         try:
             answer = _query_rag(job["from_number"], job["question"])
+            # ensure we never send empty text
+            answer = answer.strip() or "I couldn't find an answer – a human will join shortly."
             _send_whatsapp_reply(job["from_number"], answer)
         except Exception as e:
             logging.exception("Job failed: %s", e)
@@ -100,7 +110,6 @@ def webhook():
         if msg.get("type") == "voice":
             audio_id = msg["voice"]["id"]
             audio_url = _download_media_url(audio_id)
-            # ask HF Space to transcribe + answer
             answer = _query_rag(from_number, audio_url)   # Space sees "media" field
             _send_whatsapp_reply(from_number, answer)
 
