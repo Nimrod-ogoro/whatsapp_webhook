@@ -2,7 +2,9 @@
 # -*- coding: utf-8 -*-
 """
 WhatsApp → HF-Space webhook relay
-Keeps itself alive + 120 s timeouts everywhere
+- 120 s timeouts everywhere
+- no trailing spaces
+- keep-alive every 5 min
 """
 import os, json, time, logging, threading, httpx
 from flask import Flask, request, jsonify
@@ -23,7 +25,7 @@ q = SQLiteQueue(JOB_DB, auto_commit=True, multithreading=True)
 
 # ----------  HELPERS  ----------
 def send_whatsapp(to: str, body: str) -> None:
-    url = f"https://graph.facebook.com/v22.0/852540791274504/messages"
+    url = f"https://graph.facebook.com/v22.0/{PHONE_ID}/messages"          # ← no space
     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
     payload = {
         "messaging_product": "whatsapp",
@@ -33,7 +35,7 @@ def send_whatsapp(to: str, body: str) -> None:
         "text": {"body": body[:4096]}
     }
     try:
-        r = httpx.post(url, headers=headers, json=payload, timeout=10)
+        r = httpx.post(url, headers=headers, json=payload, timeout=120)   # ← 120 s
         r.raise_for_status()
         logging.info("📤 sent to %s", to)
     except Exception as e:
@@ -43,7 +45,7 @@ def query_hf(phone: str, text: str) -> str:
     payload = {"from": phone, "text": text, "verify": VERIFY_SECRET}
     for attempt in range(3):
         try:
-            r = httpx.post(HF_SPACE_URL, json=payload, timeout=120)   # ← 120 s
+            r = httpx.post(HF_SPACE_URL, json=payload, timeout=120)       # ← 120 s
             r.raise_for_status()
             return r.json().get("reply", "No reply returned.").strip() or \
                    "🤖 Amina had nothing to say – a human will jump in."
@@ -53,7 +55,7 @@ def query_hf(phone: str, text: str) -> str:
     return "😞 Amina is currently unavailable, please wait for a human agent."
 
 def download_media(media_id: str) -> str:
-    url = f"https://graph.facebook.com/v22.0/{media_id}"
+    url = f"https://graph.facebook.com/v22.0/{media_id}"                   # ← no space
     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
     r = httpx.get(url, headers=headers, params={"phone_number_id": PHONE_ID}, timeout=20)
     r.raise_for_status()
@@ -73,9 +75,10 @@ threading.Thread(target=worker, daemon=True).start()
 
 # ----------  KEEP-ALIVE ----------
 def keepalive():
+    base_url = HF_SPACE_URL.split("/whatsapp")[0]
     while True:
         try:
-            r = httpx.get(HF_SPACE_URL.split("/whatsapp")[0], timeout=30)
+            r = httpx.get(base_url, timeout=30)
             logging.info("keep-alive ping: %s", r.status_code)
         except Exception as e:
             logging.warning("keep-alive failed: %s", e)
