@@ -3,3 +3,5 @@ gunicorn>=21.0
 requests>=2.31
 persist-queue>=0.7.0
 httpx>=0.25  
+gunicorn
+gevent

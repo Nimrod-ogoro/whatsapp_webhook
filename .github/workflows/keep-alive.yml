@@ -1,0 +1,16 @@
+name: Keep-Alive Ping
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'   # every 10 min
+  workflow_dispatch:         # manual trigger button
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: CURL health endpoint
+        run: |
+          curl -f -s -m 30 \
+            https://${{ secrets.RENDER_WEBHOOK_HOST }}/ \
+            || echo "Ping failed"
