@@ -18,6 +18,7 @@ HF_SPACE_URL   = os.getenv("HF_SPACE_URL", "https://nimroddev-ld-lamaki-bot.hf.s
 VERIFY_SECRET  = os.getenv("WEBHOOK_VERIFY", "").strip()
 WHATSAPP_TOKEN = os.getenv("META_ACCESS_TOKEN", "").strip()
 PHONE_ID       = os.getenv("PHONE_NUMBER_ID", "852540791274504").strip()
+SELF_URL       = os.getenv("SELF_URL", "https://whatsapp-webhook-hpzn.onrender.com").strip()
 
 # ---------- QUEUE ----------
 q = SQLiteQueue(JOB_DB, auto_commit=True, multithreading=True)
@@ -100,7 +101,7 @@ def worker():
 threading.Thread(target=worker, daemon=True).start()
 
 
-# ---------- KEEP-ALIVE ----------
+# ---------- KEEP-ALIVE (HuggingFace) ----------
 def keepalive():
     base_url = HF_SPACE_URL.split("/whatsapp")[0]
     while True:
@@ -112,6 +113,19 @@ def keepalive():
         time.sleep(300)
 
 threading.Thread(target=keepalive, daemon=True).start()
+
+
+# ---------- SELF-KEEPALIVE (Render anti-sleep hack) ----------
+def self_keepalive():
+    while True:
+        try:
+            r = httpx.get(SELF_URL, timeout=10)
+            logging.info("self-ping: %s", r.status_code)
+        except Exception as e:
+            logging.warning("self-ping failed: %s", e)
+        time.sleep(60)   # ping every 1 minute to stay alive
+
+threading.Thread(target=self_keepalive, daemon=True).start()
 
 
 # ---------- WEBHOOK ----------
@@ -140,7 +154,7 @@ def webhook():
         msg   = value["messages"][0]
         phone = msg["from"]
 
-        # If the message is from a HUMAN AGENT (your WA app)
+        # Human manually replied from WA app
         if msg.get("id", "").startswith("wamid.") and msg.get("from") == phone:
             mark_human(phone)
             logging.info("👨‍💼 human manually replied: %s", phone)
@@ -173,3 +187,4 @@ def health():
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
