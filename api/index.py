@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 WhatsApp → HF-Space webhook relay
-With HUMAN-AGENT detector to avoid duplicate bot replies.
+Automatic bot replies, human-agent feature removed.
 """
 
 import os, json, time, logging, threading, httpx
@@ -23,20 +23,6 @@ SELF_URL       = os.getenv("SELF_URL", "https://whatsapp-webhook-hpzn.onrender.c
 # ---------- QUEUE ----------
 q = SQLiteQueue(JOB_DB, auto_commit=True, multithreading=True)
 
-# ---------- HUMAN ACTIVITY MEMORY ----------
-HUMAN_ACTIVE = {}       # phone -> last human timestamp
-COOLDOWN_SEC = 30       # silence bot for 30 seconds
-
-
-def mark_human(phone: str):
-    HUMAN_ACTIVE[phone] = time.time()
-
-
-def is_human_active(phone: str) -> bool:
-    last = HUMAN_ACTIVE.get(phone, 0)
-    return (time.time() - last) < COOLDOWN_SEC
-
-
 # ---------- HELPERS ----------
 def send_whatsapp(to: str, body: str) -> None:
     url = f"https://graph.facebook.com/v22.0/{PHONE_ID}/messages"
@@ -55,25 +41,19 @@ def send_whatsapp(to: str, body: str) -> None:
     except Exception as e:
         logging.exception("📤 send failed: %s", e)
 
-
 def query_hf(phone: str, text: str) -> str:
-    if is_human_active(phone):
-        return "👨‍💼 A human agent is typing… please wait."
-
     payload = {"from": phone, "text": text, "verify": VERIFY_SECRET}
 
     for attempt in range(3):
         try:
             r = httpx.post(HF_SPACE_URL, json=payload, timeout=120)
             r.raise_for_status()
-            return r.json().get("reply", "").strip() or \
-                   "🤖 Amina had nothing to say – a human will jump in."
+            return r.json().get("reply", "").strip() or "🤖 Amina had nothing to say."
         except Exception as e:
             logging.warning("HF call %s failed: %s", attempt + 1, e)
             time.sleep(5)
 
-    return "😞 Amina is currently unavailable, please wait for a human agent."
-
+    return "😞 Amina is currently unavailable."
 
 def download_media(media_id: str) -> str:
     url = f"https://graph.facebook.com/v22.0/{media_id}"
@@ -82,26 +62,19 @@ def download_media(media_id: str) -> str:
     r.raise_for_status()
     return r.json()["url"]
 
-
 # ---------- WORKER ----------
 def worker():
     while True:
         job = q.get()
         try:
-            if is_human_active(job["phone"]):
-                logging.info("⛔ Human active, bot suppressed for %s", job["phone"])
-                continue
-
             answer = query_hf(job["phone"], job["text"])
             send_whatsapp(job["phone"], answer)
-
         except Exception as e:
             logging.exception("job failed: %s", e)
 
 threading.Thread(target=worker, daemon=True).start()
 
-
-# ---------- KEEP-ALIVE (HuggingFace) ----------
+# ---------- KEEP-ALIVE ----------
 def keepalive():
     base_url = HF_SPACE_URL.split("/whatsapp")[0]
     while True:
@@ -114,8 +87,6 @@ def keepalive():
 
 threading.Thread(target=keepalive, daemon=True).start()
 
-
-# ---------- SELF-KEEPALIVE (Render anti-sleep hack) ----------
 def self_keepalive():
     while True:
         try:
@@ -123,10 +94,9 @@ def self_keepalive():
             logging.info("self-ping: %s", r.status_code)
         except Exception as e:
             logging.warning("self-ping failed: %s", e)
-        time.sleep(60)   # ping every 1 minute to stay alive
+        time.sleep(60)
 
 threading.Thread(target=self_keepalive, daemon=True).start()
-
 
 # ---------- WEBHOOK ----------
 @app.route("/webhook", methods=["POST"])
@@ -142,30 +112,13 @@ def webhook():
     if value.get("statuses"):
         return jsonify(ok=True), 200
 
-    # TYPING INDICATOR (mark human active)
-    if value.get("messages") and value["messages"][0].get("status") == "typing":
-        phone = value["messages"][0]["from"]
-        mark_human(phone)
-        logging.info("✍ human typing: %s", phone)
-        return jsonify(ok=True), 200
-
-    # INBOUND MESSAGE
     try:
         msg   = value["messages"][0]
         phone = msg["from"]
 
-        # Human manually replied from WA app
-        if msg.get("id", "").startswith("wamid.") and msg.get("from") == phone:
-            mark_human(phone)
-            logging.info("👨‍💼 human manually replied: %s", phone)
-            return jsonify(ok=True), 200
-
         # Incoming text
         if msg.get("type") == "text":
-            if not is_human_active(phone):
-                q.put({"phone": phone, "text": msg["text"]["body"]})
-            else:
-                logging.info("⛔ Bot silenced, human active.")
+            q.put({"phone": phone, "text": msg["text"]["body"]})
         elif msg.get("type") == "voice":
             media_url = download_media(msg["voice"]["id"])
             q.put({"phone": phone, "text": f"[voice:{media_url}]"})
@@ -178,13 +131,12 @@ def webhook():
         logging.exception("webhook error: %s", e)
         return jsonify(error=str(e)), 500
 
-
 @app.route("/", methods=["GET"])
 def health():
     return "Webhook OK", 200
 
-
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
 
