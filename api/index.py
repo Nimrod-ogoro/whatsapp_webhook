@@ -17,10 +17,10 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 # ---------- CONFIG ----------
 JOB_DB         = "/tmp/job_queue.db"
 
-HF_SPACE_URL   = os.getenv("HF_SPACE_URL")
+HF_SPACE_URL   = os.getenv("HF_SPACE")
 if not HF_SPACE_URL:
-    raise RuntimeError("HF_SPACE_URL env variable is not set")
-HF_SPACE_URL = HF_SPACE_URL.strip()
+    raise RuntimeError("HF_SPACE env variable is not set")
+HF_SPACE_URL = HF_SPACE.strip()
 
 VERIFY_SECRET  = os.getenv("WEBHOOK_VERIFY", "").strip()
 WHATSAPP_TOKEN = os.getenv("META_ACCESS_TOKEN", "").strip()
