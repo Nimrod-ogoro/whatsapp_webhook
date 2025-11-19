@@ -3,11 +3,13 @@
 """
 WhatsApp → HF-Space webhook relay
 Automatic replies only. No human-agent features.
+Stores all messages in Supabase for dashboard access.
 """
 
 import os, json, time, logging, threading, httpx
 from flask import Flask, request, jsonify
 from persistqueue import SQLiteQueue
+from supabase import create_client, Client
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -19,6 +21,11 @@ VERIFY_SECRET  = os.getenv("WEBHOOK_VERIFY", "").strip()
 WHATSAPP_TOKEN = os.getenv("META_ACCESS_TOKEN", "").strip()
 PHONE_ID       = os.getenv("PHONE_NUMBER_ID", "852540791274504").strip()
 SELF_URL       = os.getenv("SELF_URL", "").strip()
+
+# Supabase server (service role) client
+SUPABASE_URL = os.getenv("SUPABASE_URL").strip()
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY").strip()
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ---------- QUEUE ----------
 q = SQLiteQueue(JOB_DB, auto_commit=True, multithreading=True)
@@ -48,7 +55,6 @@ def send_whatsapp(to: str, body: str) -> None:
 def query_hf(phone: str, text: str) -> str:
     """Send user message to HF Space and return AI reply."""
     payload = {"from": phone, "text": text, "verify": VERIFY_SECRET}
-
     for attempt in range(3):
         try:
             r = httpx.post(HF_SPACE_URL, json=payload, timeout=120)
@@ -57,7 +63,6 @@ def query_hf(phone: str, text: str) -> str:
         except Exception as e:
             logging.warning("HF call attempt %s failed: %s", attempt + 1, e)
             time.sleep(5)
-
     return "😞 Amina is currently unavailable."
 
 def download_media(media_id: str) -> str:
@@ -68,14 +73,35 @@ def download_media(media_id: str) -> str:
     r.raise_for_status()
     return r.json()["url"]
 
+def save_message(phone: str, body: str, direction: str = "incoming") -> None:
+    """Save message to Supabase for frontend dashboard."""
+    try:
+        supabase.table("messages").insert({
+            "phone": phone,
+            "body": body,
+            "direction": direction
+        }).execute()
+
+        # Update customers table with last_seen
+        supabase.table("customers").upsert({
+            "phone": phone,
+            "last_seen": time.strftime("%Y-%m-%d %H:%M:%S")
+        }, on_conflict="phone").execute()
+    except Exception as e:
+        logging.exception("Failed to save message to Supabase: %s", e)
+
 # ---------- WORKER ----------
 def worker():
-    """Background worker: get jobs → call AI → send reply."""
+    """Background worker: get jobs → call AI → send reply → save both."""
     while True:
         job = q.get()
         try:
             answer = query_hf(job["phone"], job["text"])
             send_whatsapp(job["phone"], answer)
+
+            # Save incoming and outgoing messages
+            save_message(job["phone"], job["text"], direction="incoming")
+            save_message(job["phone"], answer, direction="outgoing")
         except Exception as e:
             logging.exception("Job failed: %s", e)
 
@@ -152,6 +178,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
