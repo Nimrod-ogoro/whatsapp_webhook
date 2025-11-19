@@ -5,3 +5,4 @@ persist-queue>=0.7.0
 httpx>=0.25  
 gunicorn
 gevent
+supabase
