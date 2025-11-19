@@ -17,10 +17,10 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 # ---------- CONFIG ----------
 JOB_DB         = "/tmp/job_queue.db"
 
-HF_SPACE_URL   = os.getenv("HF_SPACE")
-if not HF_SPACE_URL:
+HF_SPACE  = os.getenv("HF_SPACE")
+if not HF_SPACE:
     raise RuntimeError("HF_SPACE env variable is not set")
-HF_SPACE_URL = HF_SPACE.strip()
+HF_SPACE = HF_SPACE.strip()
 
 VERIFY_SECRET  = os.getenv("WEBHOOK_VERIFY", "").strip()
 WHATSAPP_TOKEN = os.getenv("META_ACCESS_TOKEN", "").strip()
@@ -69,7 +69,7 @@ def query_hf(phone: str, text: str) -> str:
     payload = {"from": phone, "text": text, "verify": VERIFY_SECRET}
     for attempt in range(3):
         try:
-            r = httpx.post(HF_SPACE_URL, json=payload, timeout=120)
+            r = httpx.post(HF_SPACE, json=payload, timeout=120)
             r.raise_for_status()
             return r.json().get("reply", "").strip() or "🤖 Amina had nothing to say."
         except Exception as e:
@@ -114,7 +114,7 @@ threading.Thread(target=worker, daemon=True).start()
 
 # ---------- KEEP ALIVE ----------
 def keepalive():
-    base_url = HF_SPACE_URL.split("/whatsapp")[0]
+    base_url = HF_SPACE.split("/whatsapp")[0]
     while True:
         try:
             r = httpx.get(base_url, timeout=30)
