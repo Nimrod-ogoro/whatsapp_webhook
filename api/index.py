@@ -15,27 +15,28 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
 # ---------- CONFIG ----------
-JOB_DB         = "/tmp/job_queue.db"
+JOB_DB = "/tmp/job_queue.db"
 
-HF_SPACE  = os.getenv("HF_SPACE")
+HF_SPACE = os.getenv("HF_SPACE")
 if not HF_SPACE:
     raise RuntimeError("HF_SPACE env variable is not set")
 HF_SPACE = HF_SPACE.strip()
 
-VERIFY_SECRET  = os.getenv("WEBHOOK_VERIFY", "").strip()
+VERIFY_SECRET = os.getenv("WEBHOOK_VERIFY", "").strip()
 WHATSAPP_TOKEN = os.getenv("META_ACCESS_TOKEN", "").strip()
-PHONE_ID       = os.getenv("PHONE_NUMBER_ID")
+
+PHONE_ID = os.getenv("PHONE_NUMBER_ID")
 if not PHONE_ID:
     raise RuntimeError("PHONE_NUMBER_ID env variable is not set")
 PHONE_ID = PHONE_ID.strip()
 
-SELF_URL       = os.getenv("SELF_URL", "").strip()
+SELF_URL = os.getenv("RENDER_WEBHOOK_HOST", "").strip()
 
 # ---------- SUPABASE ----------
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
+SUPABASE_URL = os.getenv("VITE_SUPABASE_URL")
+SUPABASE_KEY = os.getenv("VITE_SUPABASE_KEY")
 if not SUPABASE_URL or not SUPABASE_KEY:
-    raise RuntimeError("SUPABASE_URL or SUPABASE_SERVICE_KEY not set")
+    raise RuntimeError("VITE_SUPABASE_URL or VITE_SUPABASE_KEY not set")
 
 SUPABASE_URL = SUPABASE_URL.strip()
 SUPABASE_KEY = SUPABASE_KEY.strip()
@@ -114,7 +115,7 @@ threading.Thread(target=worker, daemon=True).start()
 
 # ---------- KEEP ALIVE ----------
 def keepalive():
-    base_url = HF_SPACE.split("/whatsapp")[0]
+    base_url = HF_SPACE.split("/ask")[0]
     while True:
         try:
             r = httpx.get(base_url, timeout=30)
