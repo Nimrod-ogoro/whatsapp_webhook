@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 WhatsApp → HF-Space webhook relay
-Automatic replies only. No human-agent features.
+Automatic replies only.
 Stores all messages in Supabase for dashboard access.
 """
 
@@ -14,48 +14,40 @@ from supabase import create_client, Client
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
-# -----------------------------------------------------------
+# ---------------------------------------------------------
 # CONFIG
-# -----------------------------------------------------------
+# ---------------------------------------------------------
 JOB_DB = "/tmp/job_queue.db"
 
-HF_SPACE = os.getenv("HF_SPACE")
-if not HF_SPACE:
-    raise RuntimeError("HF_SPACE env variable is not set")
-HF_SPACE = HF_SPACE.strip()
+def safe_env(name: str, required=False, default=""):
+    val = os.getenv(name)
+    if val is None:
+        if required:
+            raise RuntimeError(f"Missing env variable: {name}")
+        return default
+    return val.strip()
 
-VERIFY_SECRET = os.getenv("WEBHOOK_VERIFY", "").strip()
-WHATSAPP_TOKEN = os.getenv("META_ACCESS_TOKEN", "").strip()
+HF_SPACE = safe_env("HF_SPACE", required=True)
+VERIFY_SECRET = safe_env("WEBHOOK_VERIFY", default="")
+WHATSAPP_TOKEN = safe_env("META_ACCESS_TOKEN", required=True)
+PHONE_ID = safe_env("PHONE_NUMBER_ID", required=True)
+SELF_URL = safe_env("RENDER_WEBHOOK_HOST", default="")
 
-PHONE_ID = os.getenv("PHONE_NUMBER_ID")
-if not PHONE_ID:
-    raise RuntimeError("PHONE_NUMBER_ID env variable is not set")
-PHONE_ID = PHONE_ID.strip()
-
-SELF_URL = os.getenv("RENDER_WEBHOOK_HOST", "").strip()
-
-# -----------------------------------------------------------
+# ---------------------------------------------------------
 # SUPABASE
-# -----------------------------------------------------------
-SUPABASE_URL = os.getenv("VITE_SUPABASE_URL")
-SUPABASE_KEY = os.getenv("VITE_SUPABASE_KEY")
-
-if not SUPABASE_URL or not SUPABASE_KEY:
-    raise RuntimeError("VITE_SUPABASE_URL or VITE_SUPABASE_KEY not set")
-
-SUPABASE_URL = SUPABASE_URL.strip()
-SUPABASE_KEY = SUPABASE_KEY.strip()
-
+# ---------------------------------------------------------
+SUPABASE_URL = safe_env("VITE_SUPABASE_URL", required=True)
+SUPABASE_KEY = safe_env("VITE_SUPABASE_KEY", required=True)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# -----------------------------------------------------------
+# ---------------------------------------------------------
 # QUEUE
-# -----------------------------------------------------------
+# ---------------------------------------------------------
 q = SQLiteQueue(JOB_DB, auto_commit=True, multithreading=True)
 
-# -----------------------------------------------------------
+# ---------------------------------------------------------
 # HELPERS
-# -----------------------------------------------------------
+# ---------------------------------------------------------
 def send_whatsapp(to: str, body: str) -> None:
     url = f"https://graph.facebook.com/v22.0/{PHONE_ID}/messages"
     headers = {
@@ -78,22 +70,18 @@ def send_whatsapp(to: str, body: str) -> None:
 
 
 def query_hf(phone: str, text: str) -> str:
-    """
-    Fix: HF Spaces sometimes fail SSL. Disable verify ONLY for calls to HF.
-    """
-    payload = {"from": phone, "text": text, "verify": VERIFY_SECRET}
+    payload = {
+        "from": phone,
+        "text": text,
+        "verify": VERIFY_SECRET
+    }
 
     for attempt in range(3):
         try:
-            r = httpx.post(
-                HF_SPACE,
-                json=payload,
-                timeout=120,
-                verify=False  # FIX: HuggingFace SSL cert mismatch
-            )
+            # POST to HF webhook endpoint
+            r = httpx.post(HF_SPACE, json=payload, timeout=120)
             r.raise_for_status()
             return r.json().get("reply", "").strip() or "🤖 Amina had nothing to say."
-
         except Exception as e:
             logging.warning("HF call attempt %s failed: %s", attempt + 1, e)
             time.sleep(5)
@@ -106,7 +94,7 @@ def download_media(media_id: str) -> str:
     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
     r = httpx.get(url, headers=headers, params={"phone_number_id": PHONE_ID}, timeout=20)
     r.raise_for_status()
-    return r.json()["url"]
+    return r.json().get("url")
 
 
 def save_message(phone: str, body: str, direction: str = "incoming") -> None:
@@ -124,76 +112,65 @@ def save_message(phone: str, body: str, direction: str = "incoming") -> None:
     except Exception as e:
         logging.exception("Failed to save message to Supabase: %s", e)
 
-# -----------------------------------------------------------
+
+# ---------------------------------------------------------
 # WORKER
-# -----------------------------------------------------------
+# ---------------------------------------------------------
 def worker():
     while True:
         job = q.get()
         try:
             answer = query_hf(job["phone"], job["text"])
             send_whatsapp(job["phone"], answer)
-
-            save_message(job["phone"], job["text"], direction="incoming")
-            save_message(job["phone"], answer, direction="outgoing")
-
+            save_message(job["phone"], job["text"], "incoming")
+            save_message(job["phone"], answer, "outgoing")
         except Exception as e:
             logging.exception("Job failed: %s", e)
 
 threading.Thread(target=worker, daemon=True).start()
 
 
-# -----------------------------------------------------------
-# KEEP ALIVE — FIXED SSL ERRORS
-# -----------------------------------------------------------
+# ---------------------------------------------------------
+# KEEP ALIVE
+# ---------------------------------------------------------
 def keepalive():
-    """
-    Keep HF Space awake.
-    Disable SSL verification to bypass hostname mismatch.
-    """
-    base_url = HF_SPACE.split("/ask")[0]
-
+    base = HF_SPACE.split("/")[0]
     while True:
         try:
-            r = httpx.get(base_url, timeout=30, verify=False)
-            logging.info("keep-alive ping: %s", r.status_code)
-        except Exception as e:
-            logging.warning("keep-alive failed: %s", e)
+            httpx.get(base, timeout=30)
+        except:
+            pass
         time.sleep(300)
 
 threading.Thread(target=keepalive, daemon=True).start()
 
 
 def self_keepalive():
-    """
-    Keep Render service alive.
-    Render resets SSL so disable verify to avoid spam.
-    """
     if not SELF_URL:
         return
-
     while True:
         try:
-            r = httpx.get(SELF_URL, timeout=10, verify=False)
-            logging.info("self-ping: %s", r.status_code)
-        except Exception as e:
-            logging.warning("self-ping failed: %s", e)
+            httpx.get(SELF_URL, timeout=10)
+        except:
+            pass
         time.sleep(60)
 
 threading.Thread(target=self_keepalive, daemon=True).start()
 
-# -----------------------------------------------------------
+
+# ---------------------------------------------------------
 # WEBHOOK
-# -----------------------------------------------------------
-@app.route("/webhook", methods=["POST"])
+# ---------------------------------------------------------
+@app.post("/webhook")
 def webhook():
     data = request.get_json(force=True)
     logging.info("📩 Incoming: %s", data)
 
-    entry = data.get("entry", [{}])[0]
+    entry  = data.get("entry", [{}])[0]
     change = entry.get("changes", [{}])[0]
-    value = change.get("value", {})
+    value  = change.get("value", {})
 
+    # Delivery reports
     if value.get("statuses"):
         return jsonify(ok=True), 200
 
@@ -204,11 +181,9 @@ def webhook():
 
         if mtype == "text":
             q.put({"phone": phone, "text": msg["text"]["body"]})
-
         elif mtype == "voice":
             media_url = download_media(msg["voice"]["id"])
             q.put({"phone": phone, "text": f"[voice:{media_url}]"})
-
         else:
             logging.warning("Unsupported message type: %s", mtype)
 
@@ -219,7 +194,7 @@ def webhook():
         return jsonify(error=str(e)), 500
 
 
-@app.route("/", methods=["GET"])
+@app.get("/")
 def health():
     return "Webhook OK", 200
 
@@ -227,6 +202,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
