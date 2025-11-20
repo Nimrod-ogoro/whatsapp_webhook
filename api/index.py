@@ -99,16 +99,19 @@ def download_media(media_id: str) -> str:
 
 def save_message(phone: str, body: str, direction: str = "incoming") -> None:
     try:
+        # First, ensure the customer exists
+        supabase.table("customers").upsert({
+            "phone": phone,
+            "last_seen": time.strftime("%Y-%m-%d %H:%M:%S")
+        }, on_conflict="phone").execute()
+
+        # Then, insert the message
         supabase.table("messages").insert({
             "phone": phone,
             "body": body,
             "direction": direction
         }).execute()
 
-        supabase.table("customers").upsert({
-            "phone": phone,
-            "last_seen": time.strftime("%Y-%m-%d %H:%M:%S")
-        }, on_conflict="phone").execute()
     except Exception as e:
         logging.exception("Failed to save message to Supabase: %s", e)
 
@@ -120,12 +123,20 @@ def worker():
     while True:
         job = q.get()
         try:
-            answer = query_hf(job["phone"], job["text"])
-            send_whatsapp(job["phone"], answer)
+            # Save incoming message first
             save_message(job["phone"], job["text"], "incoming")
+
+            # Query HF AI
+            answer = query_hf(job["phone"], job["text"])
+
+            # Send reply
+            send_whatsapp(job["phone"], answer)
+
+            # Save outgoing message
             save_message(job["phone"], answer, "outgoing")
         except Exception as e:
             logging.exception("Job failed: %s", e)
+
 
 threading.Thread(target=worker, daemon=True).start()
 
@@ -142,6 +153,7 @@ def keepalive():
             pass
         time.sleep(300)
 
+
 threading.Thread(target=keepalive, daemon=True).start()
 
 
@@ -154,6 +166,7 @@ def self_keepalive():
         except:
             pass
         time.sleep(60)
+
 
 threading.Thread(target=self_keepalive, daemon=True).start()
 
