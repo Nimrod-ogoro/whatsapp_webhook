@@ -3,11 +3,11 @@ import { supabase } from "./supabaseClient";
 
 export default function App() {
   const [conversations, setConversations] = useState([]); // list of customers
-  const [selected, setSelected] = useState(null);
+  const [selectedPhone, setSelectedPhone] = useState(null);
   const [messages, setMessages] = useState([]);
 
+  // Fetch customers (conversations)
   useEffect(() => {
-    // fetch list of customers
     async function loadCustomers() {
       const { data, error } = await supabase
         .from("customers")
@@ -19,17 +19,35 @@ export default function App() {
     }
 
     loadCustomers();
+
+    // Optional: subscribe to changes in customers table
+    const channel = supabase
+      .channel("customers_channel")
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "customers" },
+        (payload) => {
+          setConversations((prev) =>
+            prev.map((c) =>
+              c.phone === payload.new.phone ? payload.new : c
+            )
+          );
+        }
+      )
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
   }, []);
 
+  // Fetch messages for selected conversation
   useEffect(() => {
-    if (!selected) return;
+    if (!selectedPhone) return;
 
-    // load messages for selected phone
     async function loadMessages() {
       const { data, error } = await supabase
         .from("messages")
         .select("*")
-        .eq("phone", selected)
+        .eq("phone", selectedPhone)
         .order("created_at", { ascending: false })
         .limit(100);
 
@@ -39,39 +57,46 @@ export default function App() {
 
     loadMessages();
 
-    // Subscribe to new messages for the selected phone
+    // Subscribe to new messages for this conversation
     const channel = supabase
-      .channel("messages_channel")
+      .channel(`messages_${selectedPhone}`)
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "messages", filter: `phone=eq.${selected}` },
+        { event: "INSERT", schema: "public", table: "messages", filter: `phone=eq.${selectedPhone}` },
         (payload) => {
           setMessages((prev) => [payload.new, ...prev]);
         }
       )
       .subscribe();
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [selected]);
+    return () => supabase.removeChannel(channel);
+  }, [selectedPhone]);
 
   return (
     <div style={{ display: "flex", height: "100vh" }}>
+      {/* Conversations list */}
       <div style={{ width: 300, borderRight: "1px solid #eee", overflow: "auto" }}>
         <h3>Conversations</h3>
         {conversations.map((c) => (
           <div
             key={c.phone}
-            onClick={() => setSelected(c.phone)}
-            style={{ padding: 12, cursor: "pointer", borderBottom: "1px solid #f2f2f2" }}
+            onClick={() => setSelectedPhone(c.phone)}
+            style={{
+              padding: 12,
+              cursor: "pointer",
+              borderBottom: "1px solid #f2f2f2",
+              background: c.phone === selectedPhone ? "#f0f0f0" : "transparent"
+            }}
           >
             <div>{c.display_name || c.phone}</div>
-            <div style={{ fontSize: 12, color: "#666" }}>{c.last_seen}</div>
+            <div style={{ fontSize: 12, color: "#666" }}>
+              {c.last_seen ? new Date(c.last_seen).toLocaleString() : "Never"}
+            </div>
           </div>
         ))}
       </div>
 
+      {/* Messages panel */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
         <div style={{ flex: 1, overflow: "auto", padding: 16, display: "flex", flexDirection: "column-reverse" }}>
           {messages.map((m) => (
@@ -94,32 +119,34 @@ export default function App() {
                 {m.body}
               </div>
               <div style={{ fontSize: 10, color: "#999" }}>
-                {new Date(m.created_at).toLocaleString()}
+                {m.created_at ? new Date(m.created_at).toLocaleString() : ""}
               </div>
             </div>
           ))}
         </div>
 
-        <ChatComposer selected={selected} />
+        <ChatComposer selectedPhone={selectedPhone} />
       </div>
     </div>
   );
 }
 
-function ChatComposer({ selected }) {
-  const [text, setText] = React.useState("");
+function ChatComposer({ selectedPhone }) {
+  const [text, setText] = useState("");
 
   async function send() {
-    if (!selected || !text.trim()) return;
+    if (!selectedPhone || !text.trim()) return;
 
-    // send via your webhook server endpoint /send
-    await fetch(`/send`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ phone: selected, text }),
-    });
-
-    setText("");
+    try {
+      await fetch(`/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: selectedPhone, text }),
+      });
+      setText("");
+    } catch (err) {
+      console.error("Failed to send message:", err);
+    }
   }
 
   return (
@@ -128,7 +155,7 @@ function ChatComposer({ selected }) {
         style={{ flex: 1, padding: 8 }}
         value={text}
         onChange={(e) => setText(e.target.value)}
-        placeholder={selected ? "Type a message" : "Select a conversation"}
+        placeholder={selectedPhone ? "Type a message" : "Select a conversation"}
       />
       <button onClick={send} style={{ marginLeft: 8 }}>
         Send
@@ -136,5 +163,6 @@ function ChatComposer({ selected }) {
     </div>
   );
 }
+
 
 
